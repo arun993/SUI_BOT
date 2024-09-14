@@ -4,10 +4,31 @@ const axios = require('axios');
 
 const PRIVATE_KEY = process.env.COMPROMISED_PRIVATE_KEY;
 const NEW_WALLET_ADDRESS = process.env.NEW_WALLET_ADDRESS;
+const COMPROMISED_WALLET_ADDRESS = process.env.COMPROMISED_WALLET_ADDRESS; // Fetch from .env file
 const SUI_RPC = process.env.SUI_RPC;
 
 const DEEP_TOKEN_CONTRACT = process.env.DEEP_TOKEN_CONTRACT;
 const SPAM_TOKEN_CONTRACT = process.env.SPAM_TOKEN_CONTRACT;
+
+const MINIMUM_GAS_FEES = 0.01; // Set a minimum threshold for gas fees in SUI
+
+// Function to get the $SUI balance (used for gas fees)
+async function getGasBalance(address) {
+  try {
+    const response = await axios.post(SUI_RPC, {
+      jsonrpc: "2.0",
+      method: "sui_getBalance",
+      params: [address],
+      id: 1
+    });
+
+    const suiBalance = response.data.result.coins.find(coin => coin.coinType === '0x2::sui::SUI');
+    return suiBalance ? suiBalance.totalBalance : 0;
+  } catch (error) {
+    console.error("Error fetching gas (SUI) balance:", error);
+    return 0;
+  }
+}
 
 // Function to get the wallet's token balances (DEEP and SPAM)
 async function getTokenBalances(address) {
@@ -59,25 +80,37 @@ async function transferTokens(tokenType, tokenAmount) {
 async function monitorWallet(address) {
   console.log("Monitoring wallet:", address);
   setInterval(async () => {
-    const balances = await getTokenBalances(address);
+    try {
+      // Check for sufficient gas balance in SUI
+      const gasBalance = await getGasBalance(address);
+      if (gasBalance < MINIMUM_GAS_FEES) {
+        console.log(`Insufficient gas ($SUI): ${gasBalance}. Waiting for gas to accumulate...`);
+        return; // Stop execution if not enough gas
+      }
+      
+      console.log(`Sufficient gas ($SUI): ${gasBalance}. Checking token balances...`);
 
-    if (balances.deep > 0) {
-      console.log(`Detected ${balances.deep} DEEP tokens. Initiating transfer...`);
-      await transferTokens(DEEP_TOKEN_CONTRACT, balances.deep);
-    } else {
-      console.log("No DEEP tokens detected.");
-    }
+      // Check for DEEP and SPAM token balances
+      const balances = await getTokenBalances(address);
 
-    if (balances.spam > 0) {
-      console.log(`Detected ${balances.spam} SPAM tokens. Initiating transfer...`);
-      await transferTokens(SPAM_TOKEN_CONTRACT, balances.spam);
-    } else {
-      console.log("No SPAM tokens detected.");
+      if (balances.deep > 0) {
+        console.log(`Detected ${balances.deep} DEEP tokens. Initiating transfer...`);
+        await transferTokens(DEEP_TOKEN_CONTRACT, balances.deep);
+      } else {
+        console.log("No DEEP tokens detected.");
+      }
+
+      if (balances.spam > 0) {
+        console.log(`Detected ${balances.spam} SPAM tokens. Initiating transfer...`);
+        await transferTokens(SPAM_TOKEN_CONTRACT, balances.spam);
+      } else {
+        console.log("No SPAM tokens detected.");
+      }
+    } catch (error) {
+      console.error("Error during monitoring process:", error);
     }
   }, 5000); // Check every 5 seconds
 }
 
-// Start monitoring the compromised wallet
-const compromisedWalletAddress = "YOUR_COMPROMISED_WALLET_ADDRESS"; // Replace with actual wallet address
-monitorWallet(compromisedWalletAddress);
-
+// Start monitoring the compromised wallet using the address from .env file
+monitorWallet(COMPROMISED_WALLET_ADDRESS);
